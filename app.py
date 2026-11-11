@@ -46,15 +46,30 @@ with st.sidebar:
         lebar_ref = st.number_input("Lebar resolusi referensi (px)", value=4000, step=1)
 
 # ------------------------------------------------------------------ sumber foto
-MODE_LIVE = "Live + lingkaran (WebRTC)"
+MODE_JS = "Live + lingkaran (tanpa paket tambahan)"
+MODE_LIVE = "Live + lingkaran (WebRTC, opsional)"
 MODE_SNAP = "Kamera browser (snapshot)"
 MODE_UPL = "Upload foto (dari kamera HP, resolusi penuh)"
-sumber = st.radio("Sumber foto", [MODE_LIVE, MODE_SNAP, MODE_UPL], horizontal=True)
+sumber = st.radio("Sumber foto", [MODE_JS, MODE_LIVE, MODE_SNAP, MODE_UPL], horizontal=True)
 
 # Lingkaran hanya bisa tampil di preview pada mode LIVE. st.camera_input (snapshot) tidak
 # mendukung overlay, jadi lingkaran baru terlihat pada foto setelah diambil.
 data = None
-if sumber == MODE_LIVE:
+if sumber == MODE_JS:
+    # Komponen HTML/JS lokal (folder focus_cam/): kamera + lingkaran digambar di browser,
+    # tidak butuh pip install apa pun. Nilai kembaliannya = foto JPEG (data URL) dari stream kamera.
+    import base64
+    import streamlit.components.v1 as components
+
+    _focus_cam = components.declare_component("focus_cam", path=str(Path(__file__).parent / "focus_cam"))
+    hasil_js = _focus_cam(sesuai=bool(core.jarak_sesuai(jarak, target, tol)),
+                          radius=core.RADIUS_FRAC, stabil=15, key="focus_cam", default=None)
+    if not hasil_js or not hasil_js.get("jpeg"):
+        st.info("Izinkan kamera di browser. Lingkaran tampil di atas video (merah = terkunci, hijau = sesuai). "
+                "Atur `jarak_sekarang` di sidebar untuk simulasi.")
+        st.stop()
+    data = base64.b64decode(hasil_js["jpeg"].split(",", 1)[1])
+elif sumber == MODE_LIVE:
     try:
         import threading
         import time
@@ -84,8 +99,18 @@ if sumber == MODE_LIVE:
                     self.auto = im.copy()
             return av.VideoFrame.from_image(core.gambar_focus_box(im, self.sesuai))
 
-    ctx = webrtc_streamer(key="live", video_processor_factory=FocusProcessor,
-                          media_stream_constraints={"video": True, "audio": False})
+    # Pilihan kamera: key berbeda -> stream di-restart dengan constraint baru.
+    # "ideal" (bukan "exact") agar laptop tanpa kamera belakang tetap jalan memakai kamera yang ada.
+    kamera = st.radio("Kamera", ["Belakang", "Depan"], horizontal=True, key="pilih_kamera")
+    facing = "environment" if kamera == "Belakang" else "user"
+    ctx = webrtc_streamer(
+        key=f"live_{facing}",
+        video_processor_factory=FocusProcessor,
+        media_stream_constraints={
+            "video": {"facingMode": {"ideal": facing}, "width": {"ideal": 1920}, "height": {"ideal": 1080}},
+            "audio": False,
+        },
+    )
     if not ctx.state.playing or ctx.video_processor is None:
         st.info("Klik START dan izinkan kamera. Lingkaran akan tampil di atas video "
                 "(merah = terkunci, hijau = sesuai). Atur `jarak_sekarang` di sidebar untuk simulasi.")
