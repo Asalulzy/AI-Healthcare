@@ -1,0 +1,6 @@
+streamlit>=1.35
+pillow>=9.4
+piexif>=1.1.3
+numpy
+streamlit-webrtc>=0.47
+av
